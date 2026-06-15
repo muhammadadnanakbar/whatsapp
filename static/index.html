@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>WhatsApp Group Copier</title>
+  <style>
+    :root {
+      --bg: #0b141a;
+      --panel: #111b21;
+      --border: #2a3942;
+      --text: #e9edef;
+      --muted: #8696a0;
+      --accent: #00a884;
+      --danger: #ea4335;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+    }
+    .wrap {
+      max-width: 720px;
+      margin: 0 auto;
+      padding: 2rem 1rem 3rem;
+    }
+    h1 { font-size: 1.5rem; margin: 0 0 0.25rem; }
+    .sub { color: var(--muted); margin-bottom: 1.5rem; font-size: 0.95rem; }
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 1.25rem;
+      margin-bottom: 1rem;
+    }
+    label {
+      display: block;
+      font-size: 0.85rem;
+      color: var(--muted);
+      margin-bottom: 0.35rem;
+    }
+    input, select {
+      width: 100%;
+      padding: 0.65rem 0.75rem;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: #202c33;
+      color: var(--text);
+      font-size: 1rem;
+      margin-bottom: 1rem;
+    }
+    input:focus, select:focus {
+      outline: 2px solid var(--accent);
+      border-color: transparent;
+    }
+    button {
+      width: 100%;
+      padding: 0.85rem 1rem;
+      border: none;
+      border-radius: 8px;
+      background: var(--accent);
+      color: #fff;
+      font-size: 1rem;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    button:disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
+    }
+    button.secondary {
+      background: #202c33;
+      border: 1px solid var(--border);
+      margin-top: 0.5rem;
+    }
+    .status {
+      margin-top: 1rem;
+      padding: 0.75rem 1rem;
+      border-radius: 8px;
+      font-size: 0.9rem;
+      white-space: pre-wrap;
+      display: none;
+    }
+    .status.show { display: block; }
+    .status.ok { background: #1a2e28; border: 1px solid #00a88455; }
+    .status.err { background: #2e1a1a; border: 1px solid #ea433555; }
+    .status.info { background: #1a242e; border: 1px solid #2a3942; }
+    .pill {
+      display: inline-block;
+      padding: 0.15rem 0.5rem;
+      border-radius: 999px;
+      font-size: 0.75rem;
+      background: #202c33;
+      color: var(--muted);
+      margin-left: 0.5rem;
+    }
+    .match-list { margin: 0.5rem 0 0; padding: 0; list-style: none; }
+    .match-list li {
+      padding: 0.5rem;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      margin-bottom: 0.5rem;
+      cursor: pointer;
+    }
+    .match-list li:hover { border-color: var(--accent); }
+    #groupList {
+      max-height: 200px;
+      overflow-y: auto;
+      font-size: 0.85rem;
+      color: var(--muted);
+    }
+    #groupList div {
+      padding: 0.35rem 0;
+      border-bottom: 1px solid var(--border);
+      cursor: pointer;
+    }
+    #groupList div:hover { color: var(--accent); }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>WhatsApp Group Copier <span id="connPill" class="pill">checking…</span></h1>
+    <p class="sub">Create a new group and copy all members from a group you are in (via WAHA).</p>
+
+    <div class="card">
+      <label for="sourceName">Source group name</label>
+      <input id="sourceName" type="text" placeholder="e.g. Crypto Drop" list="groupNames" />
+      <datalist id="groupNames"></datalist>
+
+      <label for="newName">New group name</label>
+      <input id="newName" type="text" placeholder="e.g. Crypto Earnings" />
+
+      <input type="hidden" id="sourceGroupId" />
+
+      <button id="copyBtn" type="button">Create new group and copy members</button>
+      <button id="refreshBtn" type="button" class="secondary">Refresh group list</button>
+
+      <div id="ambiguous" class="status info"></div>
+      <div id="status" class="status"></div>
+    </div>
+
+    <div class="card">
+      <label>Your groups (click to fill source name)</label>
+      <div id="groupList">Loading…</div>
+    </div>
+  </div>
+
+  <script>
+    const sourceName = document.getElementById('sourceName');
+    const newName = document.getElementById('newName');
+    const sourceGroupId = document.getElementById('sourceGroupId');
+    const copyBtn = document.getElementById('copyBtn');
+    const refreshBtn = document.getElementById('refreshBtn');
+    const statusEl = document.getElementById('status');
+    const ambiguousEl = document.getElementById('ambiguous');
+    const groupList = document.getElementById('groupList');
+    const groupNames = document.getElementById('groupNames');
+    const connPill = document.getElementById('connPill');
+
+    function showStatus(el, text, type) {
+      el.textContent = text;
+      el.className = 'status show ' + (type || 'info');
+    }
+
+    function hideStatus(el) {
+      el.className = 'status';
+      el.textContent = '';
+    }
+
+    async function checkHealth() {
+      try {
+        const res = await fetch('/api/health');
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail?.message || 'WAHA not connected');
+        const me = data.me?.id || data.me?.pushName || 'connected';
+        connPill.textContent = 'WAHA OK';
+        connPill.style.color = '#00a884';
+        return data;
+      } catch (e) {
+        connPill.textContent = 'WAHA offline';
+        connPill.style.color = '#ea4335';
+        showStatus(statusEl, 'Cannot reach WAHA. Start WAHA and scan QR for session "' + (e.message || '') + '".\n\nRun: docker compose up -d\nThen open http://localhost:3000 and connect WhatsApp.', 'err');
+        return null;
+      }
+    }
+
+    async function loadGroups() {
+      groupList.textContent = 'Loading…';
+      try {
+        const res = await fetch('/api/groups');
+        const data = await res.json();
+        if (!res.ok) throw new Error(JSON.stringify(data.detail || data));
+
+        groupNames.innerHTML = '';
+        groupList.innerHTML = '';
+        (data.groups || []).forEach(g => {
+          const opt = document.createElement('option');
+          opt.value = g.name;
+          groupNames.appendChild(opt);
+
+          const row = document.createElement('div');
+          row.textContent = g.name + (g.size != null ? ' (' + g.size + ')' : '');
+          row.title = g.id;
+          row.addEventListener('click', () => {
+            sourceName.value = g.name;
+            sourceGroupId.value = g.id;
+            hideStatus(ambiguousEl);
+          });
+          groupList.appendChild(row);
+        });
+        if (!data.groups?.length) groupList.textContent = 'No groups found.';
+      } catch (e) {
+        groupList.textContent = 'Failed to load groups: ' + e.message;
+      }
+    }
+
+    async function copyGroup() {
+      hideStatus(statusEl);
+      hideStatus(ambiguousEl);
+      const source = sourceName.value.trim();
+      const target = newName.value.trim();
+      if (!source || !target) {
+        showStatus(statusEl, 'Please enter both group names.', 'err');
+        return;
+      }
+
+      copyBtn.disabled = true;
+      showStatus(statusEl, 'Creating group and copying members… This may take a few minutes for large groups.', 'info');
+
+      try {
+        const body = {
+          source_group_name: source,
+          new_group_name: target,
+        };
+        if (sourceGroupId.value) body.source_group_id = sourceGroupId.value;
+
+        const res = await fetch('/api/groups/copy', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        const data = await res.json();
+
+        if (data.status === 'ambiguous') {
+          showStatus(ambiguousEl, data.message + '\nClick a group below:', 'info');
+          const ul = document.createElement('ul');
+          ul.className = 'match-list';
+          (data.matches || []).forEach(m => {
+            const li = document.createElement('li');
+            li.textContent = m.name + (m.size != null ? ' (' + m.size + ' members)' : '');
+            li.addEventListener('click', () => {
+              sourceName.value = m.name;
+              sourceGroupId.value = m.id;
+              hideStatus(ambiguousEl);
+              copyGroup();
+            });
+            ul.appendChild(li);
+          });
+          ambiguousEl.appendChild(ul);
+          showStatus(statusEl, 'Pick the exact source group from the list above.', 'info');
+          return;
+        }
+
+        if (!res.ok) {
+          const msg = data.detail?.message || JSON.stringify(data.detail || data);
+          throw new Error(msg);
+        }
+
+        const m = data.members || {};
+        let text = 'Done!\n\n';
+        text += 'Source: ' + data.source_group?.name + '\n';
+        text += 'New group: ' + data.new_group?.name + '\n';
+        text += 'New group id: ' + data.new_group?.id + '\n\n';
+        text += 'Members copied: ' + (m.total_in_source || '?') + '\n';
+        text += 'Added on create: ' + (m.added_on_create || 0) + '\n';
+        text += 'Added in batches: ' + (m.added_in_batches || 0) + '\n';
+        if (m.failed_batches) text += 'Failed batches: ' + m.failed_batches + '\n';
+        if (data.note) text += '\n' + data.note;
+        showStatus(statusEl, text, 'ok');
+        sourceGroupId.value = '';
+        await loadGroups();
+      } catch (e) {
+        showStatus(statusEl, 'Error: ' + e.message, 'err');
+      } finally {
+        copyBtn.disabled = false;
+      }
+    }
+
+    copyBtn.addEventListener('click', copyGroup);
+    refreshBtn.addEventListener('click', loadGroups);
+    sourceName.addEventListener('input', () => { sourceGroupId.value = ''; });
+
+    (async () => {
+      await checkHealth();
+      await loadGroups();
+    })();
+  </script>
+</body>
+</html>

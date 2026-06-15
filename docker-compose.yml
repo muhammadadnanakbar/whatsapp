@@ -1,0 +1,25 @@
+services:
+  waha:
+    image: devlikeapro/waha:latest
+    ports:
+      - "3000:3000"
+    env_file:
+      - waha-env/.env
+    environment:
+      WHATSAPP_DEFAULT_ENGINE: WEBJS
+    volumes:
+      - ./sessions:/app/.sessions
+
+  app:
+    build: .
+    ports:
+      - "8001:8001"
+    env_file:
+      - .env
+    environment:
+      WAHA_BASE_URL: http://waha:3000
+    depends_on:
+      - waha
+
+volumes:
+  waha-sessions:
